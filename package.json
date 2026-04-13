@@ -1,0 +1,17 @@
+{
+  "name": "export-public-actions",
+  "version": "1.0.0",
+  "description": "CLI to clone public Membrane actions from an external app into customized workspace actions.",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "jsonwebtoken": "^9.0.2"
+  }
+}
