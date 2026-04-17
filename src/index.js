@@ -111,13 +111,53 @@ async function listIntegrations() {
 }
 
 async function listPublicActions(externalAppId) {
-  // Fetch public actions for the chosen external app.
-  const response = await membraneFetch(
-    `/actions?externalAppId=${encodeURIComponent(externalAppId)}`,
-  );
-  const items = Array.isArray(response?.items) ? response.items : [];
+  // Fetch public actions for the chosen external app page by page until no cursor is returned.
+  const allItems = [];
+  const seenActionIds = new Set();
+  const limit = 25;
+  let cursor = null;
 
-  return items
+  while (true) {
+    const query = new URLSearchParams({
+      externalAppId,
+      includeArchived: "false",
+      limit: String(limit),
+    });
+
+    if (cursor) {
+      query.set("cursor", cursor);
+    }
+
+    const response = await membraneFetch(`/actions?${query.toString()}`);
+    const items = Array.isArray(response?.items) ? response.items : [];
+
+    if (items.length === 0) {
+      break;
+    }
+
+    // Stop if the API keeps returning the same page and no new action IDs appear.
+    const newItems = items.filter((item) => {
+      if (!item?.id || seenActionIds.has(item.id)) {
+        return false;
+      }
+
+      seenActionIds.add(item.id);
+      return true;
+    });
+
+    if (newItems.length === 0) {
+      break;
+    }
+
+    allItems.push(...newItems);
+    cursor = response?.cursor || null;
+
+    if (!cursor) {
+      break;
+    }
+  }
+
+  return allItems
     .filter((item) => item.isPublic !== false && !item.isDeactivated)
     .sort((a, b) => a.name.localeCompare(b.name));
 }
