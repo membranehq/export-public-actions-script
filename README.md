@@ -29,6 +29,6 @@ npm start
 
 - Public actions are read from the external app's latest published package (`/external-apps/<id>` -> `basePackageId` -> `/packages/<id>?version=latest`).
 - By default, `key` is omitted on create and Membrane auto-derives one. Set `SNAKE_CASE_KEYS=true` in `.env` to have the script derive snake-cased keys from the action name (e.g. `"Create Issue"` -> `create_issue`).
-- Clones carry `meta.source = "public"` and `meta.publicId` (the source action snapshot id) for downstream tooling.
+- Clones carry metadata — `meta.source = "public"` and `meta.publicId` (the source action snapshot id) — available to downstream tooling if needed.
 - Action creation uses a workspace admin token with `isAdmin: true`, matching Membrane's permission requirement for modifying actions.
 - Cloned actions are independent copies and will not receive automatic updates when the source public action is republished.
