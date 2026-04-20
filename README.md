@@ -4,11 +4,11 @@ Small Node.js CLI that:
 
 1. Reads your Membrane workspace key and secret from `.env`
 2. Generates JWT bearer tokens for regular requests and admin action creation
-3. Lists available external apps
-4. Lets you choose one app by number
-5. Lists public actions for that app
-6. Lets you choose which actions to create
-7. Creates customized actions in your workspace based on the public action definitions
+3. Lists your integrations that are linked to an external app
+4. Lets you choose one integration by number
+5. Fetches the integration's latest published public actions via the base package
+6. Lets you choose which ones to clone
+7. Creates the chosen actions in your workspace as tracked clones
 
 ## Setup
 
@@ -27,8 +27,8 @@ npm start
 
 ## Notes
 
-- The script uses the selected integration's `key` as `integrationKey` when creating actions.
-- Created actions are marked with `"isCustomized": true`.
-- The script copies the public action's `name`, `description`, `inputSchema`, `type`, `config`, and `customOutputSchema`.
+- Public actions are read from the external app's latest published package (`/external-apps/<id>` -> `basePackageId` -> `/packages/<id>?version=latest`).
+- By default, `key` is omitted on create and Membrane auto-derives one. Set `SNAKE_CASE_KEYS=true` in `.env` to have the script derive snake-cased keys from the action name (e.g. `"Create Issue"` -> `create_issue`).
+- Clones carry `meta.source = "public"` and `meta.publicId` (the source action snapshot id) for downstream tooling.
 - Action creation uses a workspace admin token with `isAdmin: true`, matching Membrane's permission requirement for modifying actions.
-- Cloned actions are independent customized copies and will not receive automatic updates when the original public actions change.
+- Cloned actions are independent copies and will not receive automatic updates when the source public action is republished.
