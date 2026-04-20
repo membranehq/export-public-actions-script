@@ -16,6 +16,9 @@ const TOKEN_ALGORITHM = "HS256";
 const TOKEN_EXPIRES_IN = 3600;
 const ADMIN_TOKEN_ALGORITHM = "HS512";
 const ADMIN_TOKEN_EXPIRES_IN = 7200;
+// Opt-in: when set, clone keys are snake-cased from the action name (e.g. "Create Issue" ->
+// "create_issue"). When not set, the script omits `key` on create and Membrane auto-derives one.
+const SNAKE_CASE_KEYS = /^(1|true|yes)$/i.test(process.env.SNAKE_CASE_KEYS || "");
 
 function assertEnv() {
   // Stop early if the required workspace credentials are missing.
@@ -110,56 +113,52 @@ async function listIntegrations() {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-async function listPublicActions(externalAppId) {
-  // Fetch public actions for the chosen external app page by page until no cursor is returned.
-  const allItems = [];
-  const seenActionIds = new Set();
-  const limit = 25;
-  let cursor = null;
+// Derive a workspace-valid snake_case key from the human-readable action name
+// ("Create Issue" -> "create_issue"). Action snapshots in published packages don't expose `key`.
+function nameToSnakeKey(name) {
+  return String(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
 
-  while (true) {
-    const query = new URLSearchParams({
-      externalAppId,
-      includeArchived: "false",
-      limit: String(limit),
-    });
+async function listPackageActions(externalAppId) {
+  // Public actions are discovered through the external-app's base package (the latest published
+  // version). Each element in the package is a frozen action snapshot at publish time.
+  const app = await membraneFetch(`/external-apps/${externalAppId}`);
 
-    if (cursor) {
-      query.set("cursor", cursor);
-    }
-
-    const response = await membraneFetch(`/actions?${query.toString()}`);
-    const items = Array.isArray(response?.items) ? response.items : [];
-
-    if (items.length === 0) {
-      break;
-    }
-
-    // Stop if the API keeps returning the same page and no new action IDs appear.
-    const newItems = items.filter((item) => {
-      if (!item?.id || seenActionIds.has(item.id)) {
-        return false;
-      }
-
-      seenActionIds.add(item.id);
-      return true;
-    });
-
-    if (newItems.length === 0) {
-      break;
-    }
-
-    allItems.push(...newItems);
-    cursor = response?.cursor || null;
-
-    if (!cursor) {
-      break;
-    }
+  if (!app?.basePackageId) {
+    return [];
   }
 
-  return allItems
-    .filter((item) => item.isPublic !== false && !item.isDeactivated)
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const pkg = await membraneFetch(`/packages/${app.basePackageId}?version=latest`);
+  const actionSnapshotRefs = (pkg?.elements || []).filter(
+    (element) => element.type === "action" && element.id,
+  );
+
+  const actionSnapshots = [];
+
+  for (const ref of actionSnapshotRefs) {
+    const actionSnapshot = await membraneFetch(`/actions/${ref.id}`);
+
+    if (!actionSnapshot?.name) {
+      continue;
+    }
+
+    actionSnapshots.push({
+      id: ref.id,
+      key: SNAKE_CASE_KEYS ? nameToSnakeKey(actionSnapshot.name) : null,
+      name: actionSnapshot.name,
+      description: actionSnapshot.description || "",
+      type: actionSnapshot.type,
+      inputSchema: actionSnapshot.inputSchema || { type: "object", properties: {} },
+      config: actionSnapshot.config || {},
+      outputMapping: actionSnapshot.outputMapping,
+      customOutputSchema: actionSnapshot.customOutputSchema || {},
+    });
+  }
+
+  return actionSnapshots.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function printNumberedList(items, formatter) {
@@ -225,18 +224,28 @@ async function promptForMultipleSelection(rl, items, label) {
   }
 }
 
-function toCreateActionPayload(action, integration) {
-  // Copy the public action fields into the payload required to create a customized action.
-  return {
-    name: action.name,
+function toCreateActionPayload(actionSnapshot, integration) {
+  const payload = {
+    name: actionSnapshot.name,
     integrationKey: integration.key,
-    description: action.description || "",
-    isCustomized: true,
-    inputSchema: action.inputSchema || { type: "object", properties: {} },
-    type: action.type,
-    config: action.config || {},
-    customOutputSchema: action.customOutputSchema || {},
+    description: actionSnapshot.description,
+    type: actionSnapshot.type,
+    inputSchema: actionSnapshot.inputSchema,
+    config: actionSnapshot.config,
+    outputMapping: actionSnapshot.outputMapping,
+    customOutputSchema: actionSnapshot.customOutputSchema,
+    meta: {
+      source: "public",
+      publicId: actionSnapshot.id,
+    },
   };
+
+  // When SNAKE_CASE_KEYS isn't set we let Membrane auto-derive the key server-side.
+  if (actionSnapshot.key) {
+    payload.key = actionSnapshot.key;
+  }
+
+  return payload;
 }
 
 async function createAction(payload) {
@@ -285,7 +294,7 @@ async function main() {
     output.write(
       `\nFetching public actions for ${selectedIntegration.name}...\n`,
     );
-    const actions = await listPublicActions(selectedIntegration.externalAppId);
+    const actions = await listPackageActions(selectedIntegration.externalAppId);
 
     if (actions.length === 0) {
       output.write("No public actions were found for that external app.\n");
@@ -294,7 +303,11 @@ async function main() {
 
     printNumberedList(
       actions,
-      (action) => `${action.name}${action.description ? ` - ${action.description}` : ""}`,
+      (action) => {
+        const keyPart = action.key ? ` (${action.key})` : "";
+        const descPart = action.description ? ` - ${action.description}` : "";
+        return `${action.name}${keyPart}${descPart}`;
+      },
     );
 
     // Step 4: let the user choose which actions should be cloned.
@@ -342,7 +355,7 @@ async function main() {
     }
 
     output.write(
-      "\nNote: cloned actions are customized copies and will not be updated automatically when the original public actions change.\n",
+      "\nNote: cloned actions are independent copies and will not receive automatic updates when the source public action changes.\n",
     );
   } finally {
     // Always close the readline session before exiting.
